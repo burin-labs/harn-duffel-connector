@@ -1,0 +1,256 @@
+import {
+  external_action_execute,
+  external_action_grant,
+  external_action_intent,
+  external_action_reconcile,
+} from "std/external_action"
+import {
+  call,
+  external_action_adapter,
+  init,
+  normalize_offer,
+  request_descriptor,
+  shutdown,
+} from "../src/lib"
+
+fn grant(intent, method = "test_fixture") {
+  return external_action_grant(
+    intent,
+    {
+      authorized_by: {kind: "user", id: "user-1"},
+      authorization_method: method,
+      authentication_assurance: "session",
+      issued_at_ms: 0,
+      expires_at_ms: 9999999999999,
+      max_external_spend: {currency: "USD", amount_minor: 12345},
+    },
+  )
+}
+
+fn booking_intent(payload = {}) {
+  return external_action_intent(
+    {
+      actor: {kind: "user", id: "user-1"},
+      provider: "duffel",
+      capability: "flights.book",
+      operation: "orders.create",
+      environment: "test",
+      payload: {
+        offer_id: "off_test_123",
+        total_amount: "123.45",
+        total_currency: "USD",
+        passengers: [
+          {
+            id: "pas_test_1",
+            type: "adult",
+            given_name: "Ada",
+            family_name: "Lovelace",
+            gender: "f",
+            born_on: "1988-12-10",
+            email: "ada@example.test",
+            phone_number: "+15555550100",
+          },
+        ],
+      }
+        + payload,
+      external_spend: {currency: "USD", amount_minor: 12345},
+      display: {summary: "Book the selected Duffel test flight for $123.45"},
+    },
+  )
+}
+
+fn fresh_offer(amount = "123.45", expires_at = "2099-01-01T00:00:00Z") {
+  return {
+    data: {
+      id: "off_test_123",
+      total_amount: amount,
+      total_currency: "USD",
+      expires_at: expires_at,
+      owner: {id: "arl_test", name: "Duffel Airways", iata_code: "ZZ"},
+      slices: [
+        {
+          id: "sli_out",
+          origin: {iata_code: "SFO"},
+          destination: {iata_code: "JFK"},
+          duration: "PT5H30M",
+          segments: [
+            {
+              id: "seg_out",
+              origin: {iata_code: "SFO"},
+              destination: {iata_code: "JFK"},
+              departing_at: "2026-10-10T08:00:00",
+              arriving_at: "2026-10-10T16:30:00",
+              duration: "PT5H30M",
+              marketing_carrier: {name: "Duffel Airways"},
+              marketing_carrier_flight_number: "123",
+              operating_carrier: {name: "Duffel Airways"},
+              aircraft: {name: "Boeing 787"},
+              stops: [],
+            },
+          ],
+        },
+      ],
+    },
+  }
+}
+
+pipeline test_duffel_smoke(harness: Harness) {
+  harness.runtime.checkpoint_clear()
+  harness.testing.http_mock_clear()
+  shutdown(harness)
+  init(harness, {access_token: "duffel_test_fixture"})
+  const live_token = request_descriptor(
+    "offers.get",
+    {access_token: "duffel_live_forbidden", offer_id: "off_1"},
+  )
+  assert(is_err(live_token), "live token must be rejected structurally")
+  assert(unwrap_err(live_token).code == "live_token_rejected", "live token denial is typed")
+  const direct_order = call(harness, "orders.create", {offer_id: "off_test_123"})
+  assert(is_err(direct_order), "direct order creation must be rejected")
+  assert(
+    unwrap_err(direct_order).code == "external_action_required",
+    "booking names the external-action requirement",
+  )
+  const search = request_descriptor(
+    "offer_requests.create",
+    {
+      slices: [{origin: "SFO", destination: "JFK", departure_date: "2026-10-10"}],
+      passengers: [{type: "adult"}],
+      cabin_class: "economy",
+      return_offers: false,
+    },
+  )
+  assert(is_ok(search), "flight search descriptor builds")
+  assert(unwrap(search).headers["Duffel-Version"] == "v2", "Duffel v2 is explicit")
+  assert(
+    unwrap(search).headers.Authorization == "Bearer duffel_test_fixture",
+    "test token is sent only in the authorization header",
+  )
+  const normalized = normalize_offer(fresh_offer().data)
+  assert(normalized.total_amount == "123.45", "comparison keeps exact decimal price")
+  assert(normalized.slices[0].segments[0].stops == 0, "comparison exposes stop count")
+  harness.testing.http_mock(
+    "*",
+    "https://api.duffel.com/*",
+    {
+      responses: [
+        {status: 200, body: json_stringify(fresh_offer()), headers: {}},
+        {
+          status: 201,
+          body:
+            "{\"data\":{\"id\":\"ord_test_123\",\"offer_id\":\"off_test_123\",\"live_mode\":false}}",
+          headers: {},
+        },
+      ],
+    },
+  )
+  const intent = booking_intent()
+  const adapter = unwrap(external_action_adapter())
+  const booked = external_action_execute(harness, intent, grant(intent), adapter)
+  const replay = external_action_execute(harness, intent, grant(intent), adapter)
+  assert(booked.status == "confirmed", "test order confirms")
+  assert(booked.provider_action_id == "ord_test_123", "receipt records Duffel order id")
+  assert(replay.id == booked.id, "duplicate delivery returns the same receipt")
+  let calls = harness.testing.http_mock_calls({include_sensitive: false})
+  assert(len(calls) == 2, "replay performs neither offer refresh nor order creation again")
+  assert(calls[0].method == "GET", "booking refreshes the selected offer")
+  assert(calls[1].method == "POST", "booking creates one order")
+  const order_body: {data: dict} = json_parse(calls[1].body)
+  assert(order_body.data.selected_offers == ["off_test_123"], "order binds one exact offer")
+  assert(order_body.data.payments[0].amount == "123.45", "payment equals authorized price")
+  harness.testing.http_mock_clear()
+  harness.runtime.checkpoint_clear()
+  harness.testing.http_mock(
+    "GET",
+    "https://api.duffel.com/air/offers/*",
+    {responses: [{status: 200, body: json_stringify(fresh_offer("124.00")), headers: {}}]},
+  )
+  const repriced_intent = booking_intent()
+  const repriced = external_action_execute(
+    harness,
+    repriced_intent,
+    grant(repriced_intent),
+    adapter,
+  )
+  assert(repriced.status == "failed_before_dispatch", "price change blocks order creation")
+  assert(repriced.error?.code == "offer_price_changed", "changed price is typed")
+  calls = harness.testing.http_mock_calls({include_sensitive: false})
+  assert(len(calls) == 1 && calls[0].method == "GET", "failed refresh never posts an order")
+  harness.testing.http_mock_clear()
+  harness.runtime.checkpoint_clear()
+  harness.testing.http_mock(
+    "*",
+    "https://api.duffel.com/*",
+    {
+      responses: [
+        {status: 200, body: json_stringify(fresh_offer()), headers: {}},
+        {
+          status: 503,
+          body:
+            "{\"errors\":[{\"code\":\"airline_internal\",\"message\":\"duffel_test_secret_should_not_survive\"}]}",
+          headers: {},
+        },
+        {
+          status: 200,
+          body:
+            "{\"data\":[{\"id\":\"ord_test_reconciled\",\"offer_id\":\"off_test_123\",\"live_mode\":false}]}",
+          headers: {},
+        },
+      ],
+    },
+  )
+  const uncertain_intent = booking_intent()
+  const uncertain = external_action_execute(
+    harness,
+    uncertain_intent,
+    grant(uncertain_intent),
+    adapter,
+  )
+  assert(uncertain.status == "reconciliation_required", "order 503 remains indeterminate")
+  assert(
+    !json_stringify(uncertain).contains("secret_should_not_survive"),
+    "provider body is absent from receipt",
+  )
+  const reconciled = external_action_reconcile(
+    harness,
+    uncertain_intent,
+    grant(uncertain_intent),
+    uncertain,
+    adapter,
+    "order-poll-1",
+  )
+  assert(reconciled.status == "confirmed", "offer-filtered order lookup reconciles")
+  assert(reconciled.provider_action_id == "ord_test_reconciled", "reconciled order id recorded")
+  calls = harness.testing.http_mock_calls({include_sensitive: false})
+  assert(len(calls) == 3, "uncertain booking uses refresh, one create, and one query")
+  assert(calls[0].method == "GET" && calls[1].method == "POST", "dispatch order is stable")
+  assert(calls[2].method == "GET", "reconciliation is read-only")
+  assert(calls[2].url.contains("offer_id=off_test_123"), "reconciliation filters exact offer")
+  harness.testing.http_mock_clear()
+  harness.runtime.checkpoint_clear()
+  const live_intent = external_action_intent(
+    intent
+      + {environment: "live", payload: intent.payload + {offer_id: "off_live_forbidden"}},
+  )
+  const live_grant = external_action_grant(
+    live_intent,
+    {
+      authorized_by: {kind: "user", id: "user-1"},
+      authorization_method: "policy",
+      authentication_assurance: "session",
+      issued_at_ms: 0,
+      expires_at_ms: 9999999999999,
+      max_external_spend: {currency: "USD", amount_minor: 12345},
+    },
+  )
+  const live = external_action_execute(harness, live_intent, live_grant, adapter)
+  assert(live.status == "failed_before_dispatch", "live environment cannot reach Duffel")
+  assert(live.error?.code == "live_booking_disabled", "live denial is typed")
+  assert(
+    len(harness.testing.http_mock_calls({include_sensitive: false})) == 0,
+    "live denial makes no provider request",
+  )
+  harness.testing.http_mock_clear()
+  harness.runtime.checkpoint_clear()
+  shutdown(harness)
+}
