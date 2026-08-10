@@ -717,7 +717,6 @@ fn __descriptor(
     headers: {
       Authorization: "Bearer " + cfg.access_token,
       Accept: "application/json",
-      "Accept-Encoding": "gzip",
       "Content-Type": "application/json",
       "Duffel-Version": "v2",
     },

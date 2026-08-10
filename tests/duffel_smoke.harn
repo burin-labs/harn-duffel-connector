@@ -123,6 +123,10 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(is_ok(search), "flight search descriptor builds")
   assert(unwrap(search).headers["Duffel-Version"] == "v2", "Duffel v2 is explicit")
   assert(
+    unwrap(search).headers["Accept-Encoding"] == nil,
+    "the HTTP transport owns response content encoding",
+  )
+  assert(
     unwrap(search).headers.Authorization == "Bearer duffel_test_fixture",
     "test token is sent only in the authorization header",
   )
