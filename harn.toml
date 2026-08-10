@@ -1,0 +1,50 @@
+[package]
+name = "harn-duffel-connector"
+version = "0.1.0"
+description = "Pure-Harn Duffel connector for flight search, test booking, and reconciliation."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/burin-labs/harn-duffel-connector"
+harn = ">=0.10.70,<0.11"
+docs_url = "README.md"
+
+[exports]
+default = "src/lib.harn"
+
+[[providers]]
+id = "duffel"
+connector = { harn = "src/lib.harn" }
+capabilities = ["pagination"]
+
+[providers.setup]
+auth_type = "api_key"
+flow = "manual"
+required_secrets = ["duffel/test-access-token"]
+setup_command = ["harn", "connect", "duffel"]
+validation_command = ["harn", "connect", "status", "--connector", "duffel", "--json"]
+
+[[providers.setup.health_checks]]
+id = "test-access-token"
+kind = "secret"
+secret = "duffel/test-access-token"
+
+[providers.setup.recovery]
+missing_auth = "Store a Duffel test token as duffel/test-access-token before enabling the connector."
+expired_credentials = "Replace the expired Duffel test token and rerun validation."
+revoked_credentials = "Replace the revoked Duffel test token and rerun validation."
+missing_scopes = "Duffel test tokens do not use OAuth scopes."
+inaccessible_resource = "Confirm the resource was created by the same Duffel test account."
+transient_provider_outage = "Retry read-only research after Duffel and airline sandboxes are healthy."
+
+[connector_contract]
+version = 1
+
+[[connector_contract.fixtures]]
+provider = "duffel"
+name = "outbound-only webhook rejection"
+kind = "webhook"
+body_json = { event = "order.created" }
+expect_type = "reject"
+expect_response_status = 405
+expect_event_count = 0
+
+[dependencies]

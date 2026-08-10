@@ -2,7 +2,10 @@
 
 Pure-Harn Duffel connector for flight research and test-mode booking.
 
-Shared connector authoring rules live in the Harn connector authoring guide.
+Shared connector authoring rules live in the Harn guide:
+
+- [Connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md)
+
 Keep provider transport and normalization here, reusable orchestration and
 external-action semantics in Harn, product approvals and persistence in Burin,
 and hosted tenancy/governance in Harn Cloud.
@@ -19,12 +22,19 @@ and hosted tenancy/governance in Harn Cloud.
 - An ambiguous create is reconciled with a read-only order query and is never
   retried speculatively.
 
+<!-- BEGIN HARN SHARED AGENT CONTRACT: managed by harn-bump-fleet -->
+
 ## Ecosystem working agreement
 
-- Pursue the ambitious product outcome with small typed interfaces, explicit
-  invariants, and deterministic projections.
-- Give each behavior one semantic owner and parity-test every projection.
-- Work autonomously inside approved scope; pause for production impact, live
-  money, destructive action, exceptional spend, or new authority.
-- Match evidence to the claim and exercise the canonical product path.
-- Shipping means landed on main with post-merge checks complete.
+- Pursue the ambitious product outcome; make the seams boring with small typed
+  interfaces, explicit invariants, and deterministic projections.
+- Give each behavior one semantic owner. Generate or parity-test other surfaces
+  instead of maintaining competing implementations.
+- Work autonomously inside approved scope. Pause for destructive, production,
+  high-spend, ambiguous, or authority-expanding actions—not routine reversible work.
+- Treat stop, wait, stand down, and pivot as control events for long-lived work.
+- Match evidence to the claim: exercise the canonical user path, state the
+  falsifier, verify liveness and recovery, and record residual blind spots.
+- "Ship" means landed on main with required deploy and post-merge checks complete.
+
+<!-- END HARN SHARED AGENT CONTRACT -->

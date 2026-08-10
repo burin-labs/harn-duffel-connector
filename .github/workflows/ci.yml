@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harn:
+    uses: burin-labs/.github/.github/workflows/harn-package.yml@c3d3025db6297d736400911029f34f7983744deb
+
+  ci-status:
+    name: CI status
+    if: ${{ always() }}
+    needs: [harn]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce required jobs
+        uses: burin-labs/.github/.github/actions/require-successful-needs@c3d3025db6297d736400911029f34f7983744deb
+        with:
+          results-json: ${{ toJSON(needs.*.result) }}

@@ -1,0 +1,768 @@
+import {
+  ExternalActionAdapter,
+  ExternalActionAdapterResult,
+  ExternalActionDispatchRequest,
+  ExternalActionReconcileRequest,
+} from "std/external_action/contracts"
+
+const DUFFEL_PROVIDER_ID = "duffel"
+
+const DUFFEL_API_BASE_URL = "https://api.duffel.com"
+
+/** One allowlisted Duffel operation and its policy class. */
+pub struct DuffelMethod {
+  name: string
+  capability: string
+  external_action: bool
+}
+
+/** Validated test-only transport configuration. */
+pub struct DuffelConfig {
+  access_token: string
+  api_base_url: string
+}
+
+/** Bounded HTTP request emitted after provider validation. */
+pub struct DuffelRequest {
+  method: string
+  url: string
+  headers: dict<string, string>
+  body?: string
+}
+
+/** Sanitized provider error safe for receipts and model context. */
+pub struct DuffelError {
+  provider: string
+  code: string
+  message: string
+  status?: int
+}
+
+/** Exact normalized booking facts checked against the Harn grant. */
+pub struct DuffelBooking {
+  offer_id: string
+  total_amount: string
+  total_currency: string
+  passengers: list<unknown>
+}
+
+const DUFFEL_METHODS = [
+  DuffelMethod {name: "places.list", capability: "flights.research", external_action: false},
+  DuffelMethod {
+    name: "offer_requests.create",
+    capability: "flights.research",
+    external_action: false,
+  },
+  DuffelMethod {name: "offer_requests.get", capability: "flights.research", external_action: false},
+  DuffelMethod {name: "offers.list", capability: "flights.research", external_action: false},
+  DuffelMethod {name: "offers.get", capability: "flights.research", external_action: false},
+  DuffelMethod {name: "orders.list", capability: "flights.orders.read", external_action: false},
+  DuffelMethod {name: "orders.get", capability: "flights.orders.read", external_action: false},
+  DuffelMethod {name: "orders.create", capability: "flights.book", external_action: true},
+]
+
+let DUFFEL_CONTEXT = {}
+
+/** Return the connector provider id. */
+pub fn provider_id() -> string {
+  return DUFFEL_PROVIDER_ID
+}
+
+/** Duffel exposes a read-only poll kind for future order-state monitoring. */
+pub fn kinds() -> list<string> {
+  return ["poll"]
+}
+
+/** Return a stable empty inbound schema for connector tooling. */
+pub fn payload_schema() -> dict {
+  return {
+    harn_schema_name: "DuffelOutboundOnlyPayload",
+    json_schema: {type: "object", additionalProperties: false},
+  }
+}
+
+/** Reject inbound delivery because the initial connector is outbound-only. */
+pub fn normalize_inbound(_harness: Harness, _raw: unknown) -> dict {
+  return {
+    type: "reject",
+    reject: {
+      status: 405,
+      code: "outbound_only",
+      message: "Duffel inbound events are not enabled by this package",
+    },
+  }
+}
+
+/** Return a no-op poll tick until order-state subscriptions are configured. */
+pub fn poll_tick(_harness: Harness, ctx: unknown) -> dict {
+  return {
+    events: [],
+    cursor: type_of(ctx) == "dict" ? ctx?.cursor : nil,
+    state: type_of(ctx) == "dict" ? ctx?.state ?? {} : {},
+  }
+}
+
+/** Initialize test-mode transport state. */
+pub fn init(_harness: Harness, ctx: unknown = nil) -> dict {
+  DUFFEL_CONTEXT = type_of(ctx) == "dict" ? ctx : {}
+  return {initialized: true, environment: "test"}
+}
+
+/** Clear connector transport state. */
+pub fn shutdown(_harness: Harness) -> dict {
+  DUFFEL_CONTEXT = {}
+  return {initialized: false}
+}
+
+/** Describe read capabilities and the separately governed booking method. */
+pub fn methods() -> list<DuffelMethod> {
+  return DUFFEL_METHODS
+}
+
+/** Execute a normalized read/research method. */
+pub fn call(harness: Harness, method: string, args: dict = {}) -> Result<unknown, DuffelError> {
+  const descriptor = __method(method)
+  if descriptor == nil {
+    return Err(__error("method_not_found", "unsupported Duffel method"))
+  }
+  if descriptor.external_action {
+    return Err(
+      __error(
+        "external_action_required",
+        "Duffel order creation requires an exact external-action grant",
+      ),
+    )
+  }
+  const cfg = __config(args)
+  if !is_ok(cfg) {
+    return Err(unwrap_err(cfg))
+  }
+  const request = request_descriptor(method, args, unwrap(cfg))
+  if !is_ok(request) {
+    return Err(unwrap_err(request))
+  }
+  const response = __request(harness.net, unwrap(request))
+  if !is_ok(response) {
+    return response
+  }
+  return Ok(__normalize_response(method, unwrap(response)))
+}
+
+/** Build a deterministic request without performing network I/O. */
+pub fn request_descriptor(
+  method: string,
+  args: dict = {},
+  provided_cfg: DuffelConfig? = nil,
+) -> Result<DuffelRequest, DuffelError> {
+  const cfg_result = provided_cfg == nil ? __config(args) : Ok(provided_cfg)
+  if !is_ok(cfg_result) {
+    return Err(unwrap_err(cfg_result))
+  }
+  const cfg = unwrap(cfg_result)
+  if method == "places.list" {
+    const query = __required(args, "query")
+    if query == "" {
+      return Err(__error("missing_query", "place suggestions require a query"))
+    }
+    return Ok(
+      __descriptor("GET", cfg.api_base_url + "/places/suggestions", nil, {query: query}, cfg),
+    )
+  }
+  if method == "offer_requests.create" {
+    const search = __search_body(args)
+    if !is_ok(search) {
+      return Err(unwrap_err(search))
+    }
+    return Ok(
+      __descriptor(
+        "POST",
+        cfg.api_base_url + "/air/offer_requests",
+        {data: unwrap(search)},
+        {return_offers: args?.return_offers ?? false},
+        cfg,
+      ),
+    )
+  }
+  if method == "offer_requests.get" {
+    const id = __required(args, "offer_request_id")
+    if id == "" {
+      return Err(__error("missing_offer_request_id", "offer request id is required"))
+    }
+    return Ok(
+      __descriptor(
+        "GET",
+        cfg.api_base_url + "/air/offer_requests/" + url_encode(id),
+        nil,
+        {view: args?.view},
+        cfg,
+      ),
+    )
+  }
+  if method == "offers.list" {
+    const id = __required(args, "offer_request_id")
+    if id == "" {
+      return Err(__error("missing_offer_request_id", "offer request id is required"))
+    }
+    return Ok(
+      __descriptor(
+        "GET",
+        cfg.api_base_url + "/air/offers",
+        nil,
+        {
+          offer_request_id: id,
+          after: args?.after,
+          before: args?.before,
+          limit: args?.limit,
+          sort: args?.sort,
+          max_connections: args?.max_connections,
+        },
+        cfg,
+      ),
+    )
+  }
+  if method == "offers.get" {
+    const id = __required(args, "offer_id")
+    if id == "" {
+      return Err(__error("missing_offer_id", "offer id is required"))
+    }
+    return Ok(
+      __descriptor(
+        "GET",
+        cfg.api_base_url + "/air/offers/" + url_encode(id),
+        nil,
+        {return_available_services: args?.return_available_services ?? false},
+        cfg,
+      ),
+    )
+  }
+  if method == "orders.list" {
+    return Ok(
+      __descriptor(
+        "GET",
+        cfg.api_base_url + "/air/orders",
+        nil,
+        {offer_id: args?.offer_id, after: args?.after, limit: args?.limit},
+        cfg,
+      ),
+    )
+  }
+  if method == "orders.get" {
+    const id = __required(args, "order_id")
+    if id == "" {
+      return Err(__error("missing_order_id", "order id is required"))
+    }
+    return Ok(__descriptor("GET", cfg.api_base_url + "/air/orders/" + url_encode(id), nil, {}, cfg))
+  }
+  return Err(__error("method_not_found", "unsupported Duffel method"))
+}
+
+/** Build the Duffel test-mode adapter consumed by std/external_action. */
+pub fn external_action_adapter(args: dict = {}) -> Result<ExternalActionAdapter, DuffelError> {
+  const cfg = __config(args)
+  if !is_ok(cfg) {
+    return Err(unwrap_err(cfg))
+  }
+  const normalized_cfg = unwrap(cfg)
+  const dispatch = fn(harness: Harness, request: ExternalActionDispatchRequest) { return __dispatch(
+    harness.clock,
+    harness.net,
+    request,
+    normalized_cfg,
+  ) }
+  const reconcile =
+    fn(harness: Harness, request: ExternalActionReconcileRequest) { return __reconcile(
+    harness.net,
+    request,
+    normalized_cfg,
+  ) }
+  return Ok({id: "duffel.test.v1", dispatch: dispatch, reconcile: reconcile})
+}
+
+/** Normalize stable flight-comparison facts from one provider offer. */
+pub fn normalize_offer(raw: unknown) -> dict {
+  const offer = type_of(raw) == "dict" ? raw : {}
+  let slices = []
+  for slice in offer?.slices ?? [] {
+    let segments = []
+    for segment in slice?.segments ?? [] {
+      segments = segments
+        + [
+        {
+          id: segment?.id,
+          origin: segment?.origin?.iata_code ?? segment?.origin?.id,
+          destination: segment?.destination?.iata_code ?? segment?.destination?.id,
+          departing_at: segment?.departing_at,
+          arriving_at: segment?.arriving_at,
+          duration: segment?.duration,
+          marketing_carrier: segment?.marketing_carrier?.name,
+          marketing_flight_number: segment?.marketing_carrier_flight_number,
+          operating_carrier: segment?.operating_carrier?.name,
+          aircraft: segment?.aircraft?.name,
+          stops: len(segment?.stops ?? []),
+        },
+      ]
+    }
+    slices = slices
+      + [
+      {
+        id: slice?.id,
+        origin: slice?.origin?.iata_code ?? slice?.origin?.id,
+        destination: slice?.destination?.iata_code ?? slice?.destination?.id,
+        duration: slice?.duration,
+        segments: segments,
+      },
+    ]
+  }
+  return {
+    id: offer?.id,
+    offer_request_id: offer?.offer_request_id,
+    total_amount: offer?.total_amount,
+    total_currency: offer?.total_currency,
+    expires_at: offer?.expires_at,
+    owner: {id: offer?.owner?.id, name: offer?.owner?.name, iata_code: offer?.owner?.iata_code},
+    payment_requirements: offer?.payment_requirements,
+    passenger_identities_required: offer?.passenger_identity_documents_required,
+    slices: slices,
+  }
+}
+
+fn __dispatch(
+  clock: HarnessClock,
+  net: HarnessNet,
+  request: ExternalActionDispatchRequest,
+  cfg: DuffelConfig,
+) -> ExternalActionAdapterResult {
+  const intent = request.intent
+  if intent.provider != DUFFEL_PROVIDER_ID || intent.capability != "flights.book"
+    || intent.operation
+    != "orders.create" {
+    return __failed("capability_mismatch")
+  }
+  if intent.environment != "test" {
+    return __failed("live_booking_disabled")
+  }
+  if type_of(intent.payload) != "dict" || intent.external_spend == nil {
+    return __failed("invalid_booking_payload")
+  }
+  const payload: dict = intent.payload
+  const checked = __booking_payload(payload, intent.external_spend)
+  if !is_ok(checked) {
+    return __failed(unwrap_err(checked).code)
+  }
+  const booking = unwrap(checked)
+  const offer_request = request_descriptor("offers.get", {offer_id: booking.offer_id}, cfg)
+  if !is_ok(offer_request) {
+    return __failed(unwrap_err(offer_request).code)
+  }
+  const fresh_response = __request(net, unwrap(offer_request))
+  if !is_ok(fresh_response) {
+    return __failed("offer_refresh_" + __error_code(unwrap_err(fresh_response)))
+  }
+  const fresh = unwrap(fresh_response)?.data ?? {}
+  const freshness = __offer_matches(clock, fresh, booking, intent.external_spend)
+  if !is_ok(freshness) {
+    return __failed(unwrap_err(freshness).code)
+  }
+  const order_body = {
+    data: {
+      type: "instant",
+      selected_offers: [booking.offer_id],
+      passengers: booking.passengers,
+      payments: [{type: "balance", currency: booking.total_currency, amount: booking.total_amount}],
+      metadata: {harn_action_id: substring(intent.fingerprint, 7, 47)},
+    },
+  }
+  const descriptor = __descriptor("POST", cfg.api_base_url + "/air/orders", order_body, {}, cfg)
+  const created = __request(net, descriptor)
+  if !is_ok(created) {
+    return __dispatch_error(unwrap_err(created))
+  }
+  const order = unwrap(created)?.data ?? {}
+  const order_id = trim(to_string(order?.id ?? ""))
+  if order_id == "" {
+    return __indeterminate("order_response_missing_id")
+  }
+  return {
+    outcome: "confirmed",
+    provider_action_id: order_id,
+    evidence_refs: ["duffel:orders/" + order_id],
+  }
+}
+
+fn __reconcile(
+  net: HarnessNet,
+  request: ExternalActionReconcileRequest,
+  cfg: DuffelConfig,
+) -> ExternalActionAdapterResult {
+  const intent = request.intent
+  if intent.provider != DUFFEL_PROVIDER_ID || intent.capability != "flights.book"
+    || intent.operation
+    != "orders.create"
+    || intent.environment != "test"
+    || type_of(intent.payload) != "dict" {
+    return __indeterminate("unsupported_reconciliation")
+  }
+  const offer_id = __required(intent.payload, "offer_id")
+  if offer_id == "" {
+    return __indeterminate("missing_offer_id")
+  }
+  const descriptor = request_descriptor("orders.list", {offer_id: offer_id, limit: 2}, cfg)
+  if !is_ok(descriptor) {
+    return __indeterminate(unwrap_err(descriptor).code)
+  }
+  const response = __request(net, unwrap(descriptor))
+  if !is_ok(response) {
+    return __indeterminate("reconcile_" + __error_code(unwrap_err(response)))
+  }
+  const orders = unwrap(response)?.data ?? []
+  if len(orders) == 0 {
+    return __indeterminate("order_not_found")
+  }
+  if len(orders) > 1 {
+    return __indeterminate("multiple_orders_for_offer")
+  }
+  const order_id = trim(to_string(orders[0]?.id ?? ""))
+  if order_id == "" {
+    return __indeterminate("order_result_missing_id")
+  }
+  return {
+    outcome: "confirmed",
+    provider_action_id: order_id,
+    evidence_refs: ["duffel:orders/" + order_id],
+  }
+}
+
+fn __booking_payload(payload: dict, spend) -> Result<DuffelBooking, DuffelError> {
+  const offer_id = __required(payload, "offer_id")
+  const total_amount = trim(to_string(payload?.total_amount ?? ""))
+  const total_currency = uppercase(trim(to_string(payload?.total_currency ?? "")))
+  const passengers = payload?.passengers
+  if offer_id == "" || total_amount == "" || regex_match("^[A-Z]{3}$", total_currency) == nil {
+    return Err(__error("invalid_booking_identity", "offer price and currency are required"))
+  }
+  if type_of(passengers) != "list" || len(passengers) == 0 || len(passengers) > 9 {
+    return Err(__error("invalid_passengers", "between one and nine passengers are required"))
+  }
+  if payload?.services != nil && len(payload.services) > 0 {
+    return Err(__error("services_not_supported", "initial test booking does not add services"))
+  }
+  const minor = __amount_minor(total_amount, total_currency)
+  if !is_ok(minor) {
+    return Err(unwrap_err(minor))
+  }
+  if spend.currency != total_currency || spend.amount_minor != unwrap(minor) {
+    return Err(__error("external_spend_mismatch", "authorized spend does not match offer price"))
+  }
+  return Ok(
+    DuffelBooking {
+      offer_id: offer_id,
+      total_amount: total_amount,
+      total_currency: total_currency,
+      passengers: passengers,
+    },
+  )
+}
+
+fn __offer_matches(
+  clock: HarnessClock,
+  offer,
+  booking: DuffelBooking,
+  spend,
+) -> Result<bool, DuffelError> {
+  if trim(to_string(offer?.id ?? "")) != booking.offer_id {
+    return Err(__error("offer_identity_changed", "refreshed offer id does not match"))
+  }
+  const amount = trim(to_string(offer?.total_amount ?? ""))
+  const currency = uppercase(trim(to_string(offer?.total_currency ?? "")))
+  if amount != booking.total_amount || currency != booking.total_currency {
+    return Err(__error("offer_price_changed", "offer price changed after authorization"))
+  }
+  const minor = __amount_minor(amount, currency)
+  if !is_ok(minor) || spend.amount_minor != unwrap(minor) || spend.currency != currency {
+    return Err(__error("external_spend_mismatch", "refreshed price exceeds exact authorization"))
+  }
+  const expires_at = trim(to_string(offer?.expires_at ?? ""))
+  const parsed = try {
+    date_parse(expires_at)
+  }
+  if expires_at == "" || !is_ok(parsed) || unwrap(parsed) <= clock.now().timestamp {
+    return Err(__error("offer_expired", "offer expired before order creation"))
+  }
+  return Ok(true)
+}
+
+fn __amount_minor(amount: string, currency: string) -> Result<int, DuffelError> {
+  if regex_match("^[0-9]+(\\.[0-9]+)?$", amount) == nil {
+    return Err(__error("invalid_total_amount", "Duffel total amount must be decimal text"))
+  }
+  const exponent = if contains(
+    [
+      "BIF",
+      "CLP",
+      "DJF",
+      "GNF",
+      "JPY",
+      "KMF",
+      "KRW",
+      "PYG",
+      "RWF",
+      "UGX",
+      "VND",
+      "VUV",
+      "XAF",
+      "XOF",
+      "XPF",
+    ],
+    currency,
+  ) {
+    0
+  } else if contains(["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"], currency) {
+    3
+  } else {
+    2
+  }
+  const parts = amount.split(".")
+  const whole = to_int(parts[0]) ?? 0
+  const fraction = len(parts) == 1 ? "" : parts[1]
+  if len(fraction) > exponent {
+    return Err(__error("invalid_currency_precision", "amount has too many fractional digits"))
+  }
+  const padded = fraction + "0".repeat(exponent - len(fraction))
+  const fractional = padded == "" ? 0 : to_int(padded) ?? 0
+  return Ok(whole * 10 ** exponent + fractional)
+}
+
+fn __search_body(args: dict) -> Result<dict, DuffelError> {
+  const slices = args?.slices
+  const passengers = args?.passengers
+  if type_of(slices) != "list" || len(slices) == 0 {
+    return Err(__error("missing_slices", "flight search requires at least one slice"))
+  }
+  if type_of(passengers) != "list" || len(passengers) == 0 || len(passengers) > 9 {
+    return Err(__error("invalid_passengers", "flight search requires one to nine passengers"))
+  }
+  return Ok(
+    {
+      cabin_class: args?.cabin_class ?? "economy",
+      slices: slices,
+      passengers: passengers,
+      max_connections: args?.max_connections,
+    },
+  )
+}
+
+fn __normalize_response(method: string, raw: unknown) -> unknown {
+  const payload = type_of(raw) == "dict" ? raw : {}
+  if method == "offers.get" {
+    return normalize_offer(payload?.data)
+  }
+  if method == "offers.list" {
+    let offers = []
+    for offer in payload?.data ?? [] {
+      offers = offers + [normalize_offer(offer)]
+    }
+    return {data: offers, meta: payload?.meta}
+  }
+  if method == "offer_requests.create" || method == "offer_requests.get" {
+    const request = payload?.data ?? {}
+    let offers = []
+    for offer in request?.offers ?? [] {
+      offers = offers + [normalize_offer(offer)]
+    }
+    return {
+      id: request?.id,
+      cabin_class: request?.cabin_class,
+      slices: request?.slices,
+      passengers: request?.passengers,
+      offers: offers,
+    }
+  }
+  if method == "places.list" {
+    let places = []
+    for place in payload?.data ?? [] {
+      places = places
+        + [
+        {
+          id: place?.id,
+          name: place?.name,
+          iata_code: place?.iata_code,
+          city_name: place?.city_name,
+          country_name: place?.country_name,
+          type: place?.type,
+        },
+      ]
+    }
+    return {data: places, meta: payload?.meta}
+  }
+  if method == "orders.get" {
+    return __normalize_order(payload?.data)
+  }
+  if method == "orders.list" {
+    let orders = []
+    for order in payload?.data ?? [] {
+      orders = orders + [__normalize_order(order)]
+    }
+    return {data: orders, meta: payload?.meta}
+  }
+  return {}
+}
+
+fn __normalize_order(order) -> dict {
+  return {
+    id: order?.id,
+    offer_id: order?.offer_id,
+    booking_reference: order?.booking_reference,
+    type: order?.type,
+    live_mode: order?.live_mode,
+    total_amount: order?.total_amount,
+    total_currency: order?.total_currency,
+    payment_status: order?.payment_status,
+    created_at: order?.created_at,
+    slices: order?.slices,
+  }
+}
+
+fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, DuffelError> {
+  let options = {headers: descriptor.headers}
+  if descriptor.body != nil {
+    options.body = descriptor.body
+  }
+  const response = try {
+    net.request(descriptor.method, descriptor.url, options)
+  }
+  if !is_ok(response) {
+    return Err(__error("transport", "Duffel request transport failed"))
+  }
+  const http = unwrap(response)
+  const body = trim(to_string(http.body ?? ""))
+  const decoded = try {
+    body == "" ? {} : json_parse(body)
+  }
+  if !is_ok(decoded) {
+    let error = DuffelError {
+      provider: DUFFEL_PROVIDER_ID,
+      code: "invalid_response",
+      message: "Duffel returned invalid JSON",
+    }
+    error.status = http.status
+    return Err(error)
+  }
+  const payload = unwrap(decoded)
+  if http.status < 200 || http.status >= 300 {
+    const first_error = payload?.errors?.[0] ?? {}
+    let error = DuffelError {
+      provider: DUFFEL_PROVIDER_ID,
+      code: trim(to_string(first_error?.code ?? "duffel_error")),
+      message: trim(to_string(first_error?.message ?? "Duffel request failed")),
+    }
+    error.status = http.status
+    return Err(error)
+  }
+  return Ok(payload)
+}
+
+fn __descriptor(
+  method: string,
+  url: string,
+  body,
+  query: dict,
+  cfg: DuffelConfig,
+) -> DuffelRequest {
+  let descriptor = DuffelRequest {
+    method: method,
+    url: __query_url(url, query),
+    headers: {
+      Authorization: "Bearer " + cfg.access_token,
+      Accept: "application/json",
+      "Accept-Encoding": "gzip",
+      "Content-Type": "application/json",
+      "Duffel-Version": "v2",
+    },
+  }
+  if body != nil {
+    descriptor.body = json_stringify(body)
+  }
+  return descriptor
+}
+
+fn __query_url(url: string, query: dict) -> string {
+  let parts: list<string> = []
+  for key in query.keys().sort() {
+    const value = query[key]
+    if value != nil && trim(to_string(value)) != "" {
+      parts = parts + [url_encode(key) + "=" + url_encode(to_string(value))]
+    }
+  }
+  return len(parts) == 0 ? url : url + "?" + parts.join("&")
+}
+
+fn __config(args: dict) -> Result<DuffelConfig, DuffelError> {
+  const token = trim(
+    to_string(args?.access_token ?? args?.token ?? DUFFEL_CONTEXT?.access_token ?? ""),
+  )
+  if token == "" {
+    return Err(__error("missing_access_token", "Duffel test access token is required"))
+  }
+  if !starts_with(token, "duffel_test_") {
+    return Err(__error("live_token_rejected", "initial connector accepts Duffel test tokens only"))
+  }
+  const base_url = trim(
+    to_string(args?.api_base_url ?? DUFFEL_CONTEXT?.api_base_url ?? DUFFEL_API_BASE_URL),
+  )
+  if base_url != DUFFEL_API_BASE_URL {
+    return Err(__error("disallowed_api_base_url", "Duffel API base URL is fixed and allowlisted"))
+  }
+  return Ok(DuffelConfig {access_token: token, api_base_url: base_url})
+}
+
+fn __method(name: string) -> DuffelMethod? {
+  const canonical = trim(name)
+  for method in DUFFEL_METHODS {
+    if method.name == canonical {
+      return method
+    }
+  }
+  return nil
+}
+
+fn __required(args, key: string) -> string {
+  const camel = if key == "offer_id" {
+    "offerId"
+  } else if key == "offer_request_id" {
+    "offerRequestId"
+  } else if key == "order_id" {
+    "orderId"
+  } else {
+    key
+  }
+  return trim(to_string(args?.[key] ?? args?.[camel] ?? ""))
+}
+
+fn __dispatch_error(error: dict) -> ExternalActionAdapterResult {
+  const status = error?.status
+  const code = __error_code(error)
+  if type_of(status) == "int" && status >= 400 && status < 500 && status != 408
+    && status
+    != 429 {
+    return __failed(code)
+  }
+  return __indeterminate(code)
+}
+
+fn __error_code(error: dict) -> string {
+  const raw = lowercase(trim(to_string(error?.code ?? "duffel_error")))
+  const clean = regex_replace("[^a-z0-9._:-]", "_", raw)
+  return clean == "" ? "duffel_error" : substring(clean, 0, min(len(clean), 128))
+}
+
+fn __failed(code: string) -> ExternalActionAdapterResult {
+  return {outcome: "failed_before_dispatch", error_code: code}
+}
+
+fn __indeterminate(code: string) -> ExternalActionAdapterResult {
+  return {outcome: "indeterminate", error_code: code}
+}
+
+fn __error(code: string, message: string) -> DuffelError {
+  return DuffelError {provider: DUFFEL_PROVIDER_ID, code: code, message: message}
+}
