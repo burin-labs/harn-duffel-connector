@@ -9,6 +9,10 @@ const DUFFEL_PROVIDER_ID = "duffel"
 
 const DUFFEL_API_BASE_URL = "https://api.duffel.com"
 
+const DUFFEL_CONNECT_TIMEOUT_MS = 10000
+
+const DUFFEL_REQUEST_TIMEOUT_MS = 30000
+
 /** One allowlisted Duffel operation and its policy class. */
 pub struct DuffelMethod {
   name: string
@@ -623,7 +627,15 @@ fn __normalize_order(order) -> dict {
 }
 
 fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, DuffelError> {
-  let options = {headers: descriptor.headers}
+  const policy = __ensure_egress_policy(net)
+  if !is_ok(policy) {
+    return Err(unwrap_err(policy))
+  }
+  let options = {
+    headers: descriptor.headers,
+    connect_timeout_ms: DUFFEL_CONNECT_TIMEOUT_MS,
+    timeout_ms: DUFFEL_REQUEST_TIMEOUT_MS,
+  }
   if descriptor.body != nil {
     options.body = descriptor.body
   }
@@ -631,6 +643,17 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
     net.request(descriptor.method, descriptor.url, options)
   }
   if !is_ok(response) {
+    const raw_error = unwrap_err(response)
+    const message = to_string(raw_error?.message ?? raw_error)
+    if to_string(raw_error?.category ?? "") == "tool_rejected" || message.contains("ceiling") {
+      return Err(__error("effect_ceiling", "Duffel network access was not granted for this task"))
+    }
+    if to_string(raw_error?.type ?? "") == "EgressBlocked" || message.contains("EgressBlocked") {
+      return Err(__error("egress_blocked", "Duffel network access was blocked by policy"))
+    }
+    if message.lower().contains("timed out") || message.lower().contains("timeout") {
+      return Err(__error("timeout", "Duffel request timed out"))
+    }
     return Err(__error("transport", "Duffel request transport failed"))
   }
   const http = unwrap(response)
@@ -659,6 +682,26 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
     return Err(error)
   }
   return Ok(payload)
+}
+
+/** Install the connector's least-authority policy when no host policy exists. */
+fn __ensure_egress_policy(net: HarnessNet) -> Result<bool, DuffelError> {
+  const installed = try {
+    net.egress_policy({allow: ["api.duffel.com"], default: "deny"})
+  }
+  if is_ok(installed) {
+    return Ok(true)
+  }
+  const raw_error = unwrap_err(installed)
+  const message = to_string(raw_error?.message ?? raw_error)
+  // The process owner can install a composite policy before loading several
+  // connectors. Harn's policy is immutable after installation, so an existing
+  // policy is the only valid idempotent case; the request still goes through
+  // that policy's enforcement below.
+  if message.contains("already configured") {
+    return Ok(true)
+  }
+  return Err(__error("egress_policy_unavailable", "Duffel network policy is unavailable"))
 }
 
 fn __descriptor(
