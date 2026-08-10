@@ -13,6 +13,8 @@ const DUFFEL_CONNECT_TIMEOUT_MS = 10000
 
 const DUFFEL_REQUEST_TIMEOUT_MS = 30000
 
+const DUFFEL_MAX_RESPONSE_BYTES = 8000000
+
 /** One allowlisted Duffel operation and its policy class. */
 pub struct DuffelMethod {
   name: string
@@ -635,6 +637,7 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
     headers: descriptor.headers,
     connect_timeout_ms: DUFFEL_CONNECT_TIMEOUT_MS,
     timeout_ms: DUFFEL_REQUEST_TIMEOUT_MS,
+    max_response_bytes: DUFFEL_MAX_RESPONSE_BYTES,
   }
   if descriptor.body != nil {
     options.body = descriptor.body
@@ -653,6 +656,9 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
     }
     if message.lower().contains("timed out") || message.lower().contains("timeout") {
       return Err(__error("timeout", "Duffel request timed out"))
+    }
+    if message.contains("max_response_bytes") {
+      return Err(__error("response_too_large", "Duffel response exceeded the connector size limit"))
     }
     return Err(__error("transport", "Duffel request transport failed"))
   }
