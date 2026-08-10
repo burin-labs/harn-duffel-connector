@@ -1,0 +1,6 @@
+.harn/
+.harn-cli/
+.harn-tmp/
+.harn-toolchain-cache/
+harn.lock
+*.tmp
