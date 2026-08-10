@@ -637,7 +637,7 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
   if !is_ok(response) {
     const raw_error = unwrap_err(response)
     const message = to_string(raw_error?.message ?? raw_error)
-    if message.contains("effect ceiling") {
+    if to_string(raw_error?.category ?? "") == "tool_rejected" || message.contains("ceiling") {
       return Err(__error("effect_ceiling", "Duffel network access was not granted for this task"))
     }
     if to_string(raw_error?.type ?? "") == "EgressBlocked" || message.contains("EgressBlocked") {
