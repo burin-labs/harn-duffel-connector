@@ -635,6 +635,17 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
     net.request(descriptor.method, descriptor.url, options)
   }
   if !is_ok(response) {
+    const raw_error = unwrap_err(response)
+    const message = to_string(raw_error?.message ?? raw_error)
+    if message.contains("effect ceiling") {
+      return Err(__error("effect_ceiling", "Duffel network access was not granted for this task"))
+    }
+    if to_string(raw_error?.type ?? "") == "EgressBlocked" || message.contains("EgressBlocked") {
+      return Err(__error("egress_blocked", "Duffel network access was blocked by policy"))
+    }
+    if message.lower().contains("timed out") || message.lower().contains("timeout") {
+      return Err(__error("timeout", "Duffel request timed out"))
+    }
     return Err(__error("transport", "Duffel request transport failed"))
   }
   const http = unwrap(response)
