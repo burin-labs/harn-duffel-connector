@@ -135,6 +135,7 @@ pipeline test_duffel_smoke(harness: Harness) {
     {
       responses: [
         {status: 200, body: json_stringify(fresh_offer()), headers: {}},
+        {status: 200, body: json_stringify(fresh_offer()), headers: {}},
         {
           status: 201,
           body:
@@ -144,6 +145,17 @@ pipeline test_duffel_smoke(harness: Harness) {
       ],
     },
   )
+  const researched = call(
+    harness,
+    "offer_requests.create",
+    {
+      access_token: "duffel_test_fixture",
+      slices: [{origin: "SFO", destination: "JFK", departure_date: "2026-10-10"}],
+      passengers: [{type: "adult"}],
+      cabin_class: "economy",
+    },
+  )
+  assert(is_ok(researched), "the public read interface installs its network policy")
   const intent = booking_intent()
   const adapter = unwrap(external_action_adapter())
   const booked = external_action_execute(harness, intent, grant(intent), adapter)
@@ -152,10 +164,11 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(booked.provider_action_id == "ord_test_123", "receipt records Duffel order id")
   assert(replay.id == booked.id, "duplicate delivery returns the same receipt")
   let calls = harness.testing.http_mock_calls({include_sensitive: false})
-  assert(len(calls) == 2, "replay performs neither offer refresh nor order creation again")
-  assert(calls[0].method == "GET", "booking refreshes the selected offer")
-  assert(calls[1].method == "POST", "booking creates one order")
-  const order_body: {data: dict} = json_parse(calls[1].body)
+  assert(len(calls) == 3, "replay performs neither offer refresh nor order creation again")
+  assert(calls[0].method == "POST", "research uses the public connector call interface")
+  assert(calls[1].method == "GET", "booking refreshes the selected offer")
+  assert(calls[2].method == "POST", "booking creates one order")
+  const order_body: {data: dict} = json_parse(calls[2].body)
   assert(order_body.data.selected_offers == ["off_test_123"], "order binds one exact offer")
   assert(order_body.data.payments[0].amount == "123.45", "payment equals authorized price")
   harness.testing.http_mock_clear()
