@@ -9,6 +9,10 @@ const DUFFEL_PROVIDER_ID = "duffel"
 
 const DUFFEL_API_BASE_URL = "https://api.duffel.com"
 
+const DUFFEL_CONNECT_TIMEOUT_MS = 10000
+
+const DUFFEL_REQUEST_TIMEOUT_MS = 30000
+
 /** One allowlisted Duffel operation and its policy class. */
 pub struct DuffelMethod {
   name: string
@@ -627,7 +631,11 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
   if !is_ok(policy) {
     return Err(unwrap_err(policy))
   }
-  let options = {headers: descriptor.headers}
+  let options = {
+    headers: descriptor.headers,
+    connect_timeout_ms: DUFFEL_CONNECT_TIMEOUT_MS,
+    timeout_ms: DUFFEL_REQUEST_TIMEOUT_MS,
+  }
   if descriptor.body != nil {
     options.body = descriptor.body
   }

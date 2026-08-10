@@ -8,3 +8,5 @@
   at-most-once order creation, bounded receipts, and read-only reconciliation.
 - Install a default-deny network policy for direct connector calls so research
   works without requiring another network tool to run first.
+- Give Duffel sandbox searches an explicit 30-second request budget instead of
+  inheriting Harn's shorter generic HTTP default.
