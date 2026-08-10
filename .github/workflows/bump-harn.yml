@@ -1,0 +1,23 @@
+name: Bump Harn Runtime
+
+# fleet.toml in harn-bump-fleet owns this generated dispatch adapter.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional exact Harn tag (vX.Y.Z). Defaults to latest."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    uses: burin-labs/harn/.github/workflows/bump-harn.yml@d23dc77198ea45210eb3fb205031c349533d920f
+    with:
+      version: ${{ inputs.version }}
+      validate-command: harn package verify .
+    secrets:
+      app-client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+      app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
