@@ -42,6 +42,7 @@ pub struct DuffelError {
   code: string
   message: string
   status?: int
+  source_pointer?: string
 }
 
 /** Exact normalized booking facts checked against the Harn grant. */
@@ -484,12 +485,21 @@ fn __passenger_details(passengers: list<unknown>) -> Result<bool, DuffelError> {
     if type_of(passenger) != "dict" {
       return Err(__error("passenger_details_required", "each passenger must be an object"))
     }
-    for field in ["id", "given_name", "family_name", "born_on", "gender", "email", "phone_number"] {
+    for field in [
+      "id",
+      "title",
+      "given_name",
+      "family_name",
+      "born_on",
+      "gender",
+      "email",
+      "phone_number",
+    ] {
       if __required(passenger, field) == "" {
         return Err(
           __error(
             "passenger_details_required",
-            "each passenger needs an offer ID, name, birth date, gender, email, and phone number",
+            "each passenger needs an offer ID, title, name, birth date, gender, email, and phone number",
           ),
         )
       }
@@ -714,6 +724,10 @@ fn __request(net: HarnessNet, descriptor: DuffelRequest) -> Result<unknown, Duff
       message: trim(to_string(first_error?.message ?? "Duffel request failed")),
     }
     error.status = http.status
+    const source_pointer = trim(to_string(first_error?.source?.pointer ?? ""))
+    if source_pointer != "" {
+      error.source_pointer = source_pointer
+    }
     return Err(error)
   }
   return Ok(payload)
@@ -817,7 +831,11 @@ fn __required(args, key: string) -> string {
 
 fn __dispatch_error(error: dict) -> ExternalActionAdapterResult {
   const status = error?.status
-  const code = __error_code(error)
+  let code = __error_code(error)
+  const source_pointer = trim(to_string(error?.source_pointer ?? ""))
+  if source_pointer != "" {
+    code = __error_code({code: code + ":" + source_pointer})
+  }
   if type_of(status) == "int" && status >= 400 && status < 500 && status != 408
     && status
     != 429 {

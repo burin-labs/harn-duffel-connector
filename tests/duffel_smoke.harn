@@ -43,6 +43,7 @@ fn booking_intent(payload = {}) {
           {
             id: "pas_test_1",
             type: "adult",
+            title: "ms",
             given_name: "Ada",
             family_name: "Lovelace",
             gender: "f",
@@ -195,6 +196,7 @@ pipeline test_duffel_smoke(harness: Harness) {
   const order_body: {data: dict} = json_parse(calls[2].body)
   assert(order_body.data.selected_offers == ["off_test_123"], "order binds one exact offer")
   assert(order_body.data.payments[0].amount == "123.45", "payment equals authorized price")
+  assert(order_body.data.passengers[0].title == "ms", "order carries the required passenger title")
   harness.testing.http_mock_clear()
   harness.runtime.checkpoint_clear()
   harness.testing.http_mock(
@@ -226,7 +228,7 @@ pipeline test_duffel_smoke(harness: Harness) {
         {
           status: 422,
           body:
-            "{\"errors\":[{\"code\":\"validation_required\",\"message\":\"passenger details are incomplete\"}]}",
+            "{\"errors\":[{\"code\":\"validation_required\",\"message\":\"Field 'title' can't be blank\",\"source\":{\"pointer\":\"/passengers/0/title\"}}]}",
           headers: {},
         },
       ],
@@ -247,7 +249,10 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(rejected.status == "rejected", "definite order 4xx is a dispatched rejection")
   assert(rejected.dispatch_attempted, "order 4xx records that provider dispatch occurred")
   assert(!rejected.error?.retryable, "definite rejection does not invite a retry")
-  assert(rejected.error?.code == "validation_required", "provider code remains typed")
+  assert(
+    rejected.error?.code == "validation_required:_passengers_0_title",
+    "provider code keeps a sanitized validation pointer",
+  )
   assert(rejected_replay.id == rejected.id, "rejection replay uses the durable receipt")
   calls = harness.testing.http_mock_calls({include_sensitive: false})
   assert(len(calls) == 2, "rejection replay sends neither refresh nor order again")
