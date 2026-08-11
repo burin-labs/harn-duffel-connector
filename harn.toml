@@ -19,6 +19,9 @@ capabilities = ["pagination"]
 auth_type = "api_key"
 flow = "manual"
 required_secrets = ["duffel/test-access-token"]
+credential_environment = [
+  { secret = "duffel/test-access-token", environment_names = ["DUFFEL_TEST_KEY"] },
+]
 setup_command = ["harn", "connect", "duffel"]
 validation_command = ["harn", "connect", "status", "--connector", "duffel", "--json"]
 

@@ -22,7 +22,9 @@ Read/research methods are available through `call(...)`:
 
 Search results are normalized to stable comparison facts: exact decimal price
 and currency, expiry, airline, slices, segments, stops, schedule, duration, and
-aircraft. Offer pagination preserves Duffel cursors. Always call `offers.get`
+aircraft. Each offer also keeps Duffel's passenger ID, type, and age so an
+order can attach the required personal details to the exact searched passenger.
+Offer pagination preserves Duffel cursors. Always call `offers.get`
 before presenting a final booking preview because airline price and availability
 can change after the initial search.
 
@@ -45,9 +47,9 @@ reconciliation lists orders by the exact offer ID and never repeats the POST.
 ## Configure
 
 Store the token as `duffel/test-access-token` through Harn/Burin connector
-setup. During local Burin development, the credential resolver may consume the
-existing `DUFFEL_TEST_KEY` environment entry. Never paste the token into a
-prompt, committed file, CLI argument, or trace.
+setup. The connector manifest also declares `DUFFEL_TEST_KEY` as a supported
+local environment source. Never paste the token into a prompt, committed file,
+CLI argument, or trace.
 
 Duffel test mode is a sandbox: its test tokens can access only test resources,
 and test orders do not spend real money or create real travel bookings. The
