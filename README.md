@@ -47,9 +47,9 @@ reconciliation lists orders by the exact offer ID and never repeats the POST.
 ## Configure
 
 Store the token as `duffel/test-access-token` through Harn/Burin connector
-setup. During local Burin development, the credential resolver may consume the
-existing `DUFFEL_TEST_KEY` environment entry. Never paste the token into a
-prompt, committed file, CLI argument, or trace.
+setup. The connector manifest also declares `DUFFEL_TEST_KEY` as a supported
+local environment source. Never paste the token into a prompt, committed file,
+CLI argument, or trace.
 
 Duffel test mode is a sandbox: its test tokens can access only test resources,
 and test orders do not spend real money or create real travel bookings. The

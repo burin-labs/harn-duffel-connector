@@ -5,9 +5,8 @@
 - Record definite Duffel order 4xx responses as dispatched rejections so
   callers do not mistake them for preflight failures and retry blindly.
 - Preserve each offer's Duffel passenger reference for valid order creation.
-
-## Unreleased
-
+- Declare the supported Duffel test credential environment source in the typed
+  connector manifest.
 - Add normalized Duffel flight/place research with paginated offers and
   mandatory pre-booking offer refresh.
 - Add a test-only external-action adapter with exact spend validation,
