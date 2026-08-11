@@ -455,6 +455,10 @@ fn __booking_payload(payload: dict, spend) -> Result<DuffelBooking, DuffelError>
   if type_of(passengers) != "list" || len(passengers) == 0 || len(passengers) > 9 {
     return Err(__error("invalid_passengers", "between one and nine passengers are required"))
   }
+  const passenger_details = __passenger_details(passengers)
+  if !is_ok(passenger_details) {
+    return Err(unwrap_err(passenger_details))
+  }
   if payload?.services != nil && len(payload.services) > 0 {
     return Err(__error("services_not_supported", "initial test booking does not add services"))
   }
@@ -473,6 +477,25 @@ fn __booking_payload(payload: dict, spend) -> Result<DuffelBooking, DuffelError>
       passengers: passengers,
     },
   )
+}
+
+fn __passenger_details(passengers: list<unknown>) -> Result<bool, DuffelError> {
+  for passenger in passengers {
+    if type_of(passenger) != "dict" {
+      return Err(__error("passenger_details_required", "each passenger must be an object"))
+    }
+    for field in ["id", "given_name", "family_name", "born_on", "gender", "email", "phone_number"] {
+      if __required(passenger, field) == "" {
+        return Err(
+          __error(
+            "passenger_details_required",
+            "each passenger needs an offer ID, name, birth date, gender, email, and phone number",
+          ),
+        )
+      }
+    }
+  }
+  return Ok(true)
 }
 
 fn __offer_matches(

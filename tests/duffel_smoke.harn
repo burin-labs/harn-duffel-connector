@@ -167,6 +167,21 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(is_ok(researched), "the public read interface installs its network policy")
   const intent = booking_intent()
   const adapter = unwrap(external_action_adapter())
+  const incomplete_intent = booking_intent({passengers: [{id: "pas_test_1", type: "adult"}]})
+  const incomplete = external_action_execute(
+    harness,
+    incomplete_intent,
+    grant(incomplete_intent),
+    adapter,
+  )
+  assert(
+    incomplete.status == "failed_before_dispatch",
+    "incomplete passenger details must stop before an order request",
+  )
+  assert(
+    incomplete.error?.code == "passenger_details_required",
+    "missing passenger details have a stable error code",
+  )
   const booked = external_action_execute(harness, intent, grant(intent), adapter)
   const replay = external_action_execute(harness, intent, grant(intent), adapter)
   assert(booked.status == "confirmed", "test order confirms")

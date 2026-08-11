@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Validate required passenger identity details before dispatching a test order.
 - Record definite Duffel order 4xx responses as dispatched rejections so
   callers do not mistake them for preflight failures and retry blindly.
 - Preserve each offer's Duffel passenger reference for valid order creation.
