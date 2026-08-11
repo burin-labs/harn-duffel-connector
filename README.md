@@ -38,6 +38,12 @@ can change after the initial search.
 - exact offer ID, decimal amount, currency, and passenger payload;
 - matching `external_spend` in ISO currency minor units.
 
+Each passenger must include the ID returned by the offer search plus `title`,
+`given_name`, `family_name`, `born_on`, `gender`, `email`, and
+`phone_number`. The connector checks these fields before dispatch. If Duffel
+rejects a field, the receipt includes its sanitized response pointer so the
+problem is actionable without exposing personal data.
+
 The adapter refreshes the offer inside the at-most-once dispatch checkpoint,
 checks identity, expiry, price, currency, and the granted spend, then creates
 one test order using Duffel test balance. Services and live payments are not
