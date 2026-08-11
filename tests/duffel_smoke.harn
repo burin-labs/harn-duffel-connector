@@ -67,6 +67,7 @@ fn fresh_offer(amount = "123.45", expires_at = "2099-01-01T00:00:00Z") {
       total_currency: "USD",
       expires_at: expires_at,
       owner: {id: "arl_test", name: "Duffel Airways", iata_code: "ZZ"},
+      passengers: [{id: "pas_test_1", type: "adult"}],
       slices: [
         {
           id: "sli_out",
@@ -132,6 +133,10 @@ pipeline test_duffel_smoke(harness: Harness) {
   )
   const normalized = normalize_offer(fresh_offer().data)
   assert(normalized.total_amount == "123.45", "comparison keeps exact decimal price")
+  assert(
+    normalized.passengers == [{id: "pas_test_1", type: "adult", age: nil}],
+    "offer keeps the passenger reference needed for booking",
+  )
   assert(normalized.slices[0].segments[0].stops == 0, "comparison exposes stop count")
   harness.testing.http_mock(
     "*",
@@ -193,6 +198,48 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(repriced.error?.code == "offer_price_changed", "changed price is typed")
   calls = harness.testing.http_mock_calls({include_sensitive: false})
   assert(len(calls) == 1 && calls[0].method == "GET", "failed refresh never posts an order")
+  harness.testing.http_mock_clear()
+  harness.runtime.checkpoint_clear()
+  const rejected_intent = booking_intent({offer_id: "off_test_rejected"})
+  const rejected_offer = fresh_offer() + {data: fresh_offer().data + {id: "off_test_rejected"}}
+  harness.testing.http_mock(
+    "*",
+    "https://api.duffel.com/*",
+    {
+      responses: [
+        {status: 200, body: json_stringify(rejected_offer), headers: {}},
+        {
+          status: 422,
+          body:
+            "{\"errors\":[{\"code\":\"validation_required\",\"message\":\"passenger details are incomplete\"}]}",
+          headers: {},
+        },
+      ],
+    },
+  )
+  const rejected = external_action_execute(
+    harness,
+    rejected_intent,
+    grant(rejected_intent),
+    adapter,
+  )
+  const rejected_replay = external_action_execute(
+    harness,
+    rejected_intent,
+    grant(rejected_intent),
+    adapter,
+  )
+  assert(rejected.status == "rejected", "definite order 4xx is a dispatched rejection")
+  assert(rejected.dispatch_attempted, "order 4xx records that provider dispatch occurred")
+  assert(!rejected.error?.retryable, "definite rejection does not invite a retry")
+  assert(rejected.error?.code == "validation_required", "provider code remains typed")
+  assert(rejected_replay.id == rejected.id, "rejection replay uses the durable receipt")
+  calls = harness.testing.http_mock_calls({include_sensitive: false})
+  assert(len(calls) == 2, "rejection replay sends neither refresh nor order again")
+  assert(
+    calls[0].method == "GET" && calls[1].method == "POST",
+    "rejection follows one exact dispatch",
+  )
   harness.testing.http_mock_clear()
   harness.runtime.checkpoint_clear()
   harness.testing.http_mock(

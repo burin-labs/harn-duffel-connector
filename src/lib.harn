@@ -287,6 +287,11 @@ pub fn external_action_adapter(args: dict = {}) -> Result<ExternalActionAdapter,
 /** Normalize stable flight-comparison facts from one provider offer. */
 pub fn normalize_offer(raw: unknown) -> dict {
   const offer = type_of(raw) == "dict" ? raw : {}
+  let passengers = []
+  for passenger in offer?.passengers ?? [] {
+    passengers = passengers
+      + [{id: passenger?.id, type: passenger?.type, age: passenger?.age}]
+  }
   let slices = []
   for slice in offer?.slices ?? [] {
     let segments = []
@@ -328,6 +333,7 @@ pub fn normalize_offer(raw: unknown) -> dict {
     owner: {id: offer?.owner?.id, name: offer?.owner?.name, iata_code: offer?.owner?.iata_code},
     payment_requirements: offer?.payment_requirements,
     passenger_identities_required: offer?.passenger_identity_documents_required,
+    passengers: passengers,
     slices: slices,
   }
 }
@@ -792,7 +798,7 @@ fn __dispatch_error(error: dict) -> ExternalActionAdapterResult {
   if type_of(status) == "int" && status >= 400 && status < 500 && status != 408
     && status
     != 429 {
-    return __failed(code)
+    return __rejected(code)
   }
   return __indeterminate(code)
 }
@@ -805,6 +811,10 @@ fn __error_code(error: dict) -> string {
 
 fn __failed(code: string) -> ExternalActionAdapterResult {
   return {outcome: "failed_before_dispatch", error_code: code}
+}
+
+fn __rejected(code: string) -> ExternalActionAdapterResult {
+  return {outcome: "rejected", error_code: code}
 }
 
 fn __indeterminate(code: string) -> ExternalActionAdapterResult {

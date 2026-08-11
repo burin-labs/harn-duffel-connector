@@ -22,7 +22,9 @@ Read/research methods are available through `call(...)`:
 
 Search results are normalized to stable comparison facts: exact decimal price
 and currency, expiry, airline, slices, segments, stops, schedule, duration, and
-aircraft. Offer pagination preserves Duffel cursors. Always call `offers.get`
+aircraft. Each offer also keeps Duffel's passenger ID, type, and age so an
+order can attach the required personal details to the exact searched passenger.
+Offer pagination preserves Duffel cursors. Always call `offers.get`
 before presenting a final booking preview because airline price and availability
 can change after the initial search.
 
