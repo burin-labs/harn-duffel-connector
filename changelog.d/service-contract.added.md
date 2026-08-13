@@ -1,0 +1,1 @@
+Declare every Duffel operation, test-only booking environment, evidence rule, protected-profile disclosure class, outside-spend commitment, reconciliation requirement, and redaction target in the typed connector manifest.
