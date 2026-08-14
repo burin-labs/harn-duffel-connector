@@ -1,0 +1,1 @@
+Duffel test orders now receive fictional passenger identity and contact values only through the protected-profile disclosure seam after exact authorization. Model-visible tool arguments carry offer passenger references, not identity values.

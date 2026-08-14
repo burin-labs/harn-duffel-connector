@@ -35,20 +35,25 @@ can change after the initial search.
 - capability `flights.book`;
 - operation `orders.create`;
 - environment `test`;
-- exact offer ID, decimal amount, currency, and passenger payload;
+- exact offer ID, decimal amount, currency, and offer passenger reference;
+- a purpose-bound protected disclosure plan for legal identity, birth date,
+  and contact details;
 - matching `external_spend` in ISO currency minor units.
 
-Each passenger must include the ID returned by the offer search plus `title`,
-`given_name`, `family_name`, `born_on`, `gender`, `email`, and
-`phone_number`. The connector checks these fields before dispatch. If Duffel
-rejects a field, the receipt includes its sanitized response pointer so the
-problem is actionable without exposing personal data.
+The model-visible passenger payload contains only the ID and type returned by
+the offer. After exact authorization, the protected-profile resolver supplies
+the explicitly fictional test identity and contact values directly to the
+adapter. The connector rejects identity-shaped values in the intent. It also
+requests a purpose-bound travel-document disclosure when the refreshed offer
+requires one. Receipts retain field classes and purpose, never values.
 
 The adapter refreshes the offer inside the at-most-once dispatch checkpoint,
-checks identity, expiry, price, currency, and the granted spend, then creates
-one test order using Duffel test balance. Services and live payments are not
-enabled. A timeout or 5xx after creation becomes `reconciliation_required`;
-reconciliation lists orders by the exact offer ID and never repeats the POST.
+checks the offer and passenger identity, expiry, price, currency, conditional
+document requirement, and granted spend, then creates one test order using
+Duffel test balance. The current personal-profile path supports one passenger.
+Services and live payments are not enabled. A timeout or 5xx after creation
+becomes `reconciliation_required`; reconciliation lists orders by the exact
+offer ID and never repeats the POST.
 
 ## Configure
 
