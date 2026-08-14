@@ -4,6 +4,7 @@ import {
   ExternalActionDispatchRequest,
   ExternalActionReconcileRequest,
 } from "std/external_action/contracts"
+import { ExternalActionDisclosurePlan } from "std/external_action/disclosure"
 
 const DUFFEL_PROVIDER_ID = "duffel"
 
@@ -124,6 +125,23 @@ pub fn shutdown(_harness: Harness) -> dict {
 /** Describe read capabilities and the separately governed booking method. */
 pub fn methods() -> list<DuffelMethod> {
   return DUFFEL_METHODS
+}
+
+/** Build the value-free disclosure plan required by one Duffel test order. */
+pub fn order_disclosure_plan(
+  travel_documents_required: bool = false,
+) -> ExternalActionDisclosurePlan {
+  let field_classes = ["legal_identity", "birth_date", "contact_details"]
+  if travel_documents_required {
+    field_classes = field_classes + ["travel_documents"]
+  }
+  return {
+    field_classes: field_classes,
+    recipient: "Duffel test mode",
+    purpose: "Create the exact approved fictional test order.",
+    source: "fictional_test_fixture",
+    require_reauthentication: false,
+  }
 }
 
 /** Execute a normalized read/research method. */
@@ -358,7 +376,7 @@ fn __dispatch(
     return __failed("invalid_booking_payload")
   }
   const payload: dict = intent.payload
-  const checked = __booking_payload(payload, intent.external_spend)
+  const checked = __booking_payload(payload, intent.external_spend, request.protected_disclosure)
   if !is_ok(checked) {
     return __failed(unwrap_err(checked).code)
   }
@@ -445,20 +463,25 @@ fn __reconcile(
   }
 }
 
-fn __booking_payload(payload: dict, spend) -> Result<DuffelBooking, DuffelError> {
+fn __booking_payload(payload: dict, spend, disclosure) -> Result<DuffelBooking, DuffelError> {
   const offer_id = __required(payload, "offer_id")
   const total_amount = trim(to_string(payload?.total_amount ?? ""))
   const total_currency = uppercase(trim(to_string(payload?.total_currency ?? "")))
-  const passengers = payload?.passengers
+  const passenger_refs = payload?.passengers
   if offer_id == "" || total_amount == "" || regex_match("^[A-Z]{3}$", total_currency) == nil {
     return Err(__error("invalid_booking_identity", "offer price and currency are required"))
   }
-  if type_of(passengers) != "list" || len(passengers) == 0 || len(passengers) > 9 {
-    return Err(__error("invalid_passengers", "between one and nine passengers are required"))
+  if type_of(passenger_refs) != "list" || len(passenger_refs) != 1 {
+    return Err(
+      __error(
+        "single_profile_passenger_required",
+        "protected-profile booking currently supports exactly one passenger",
+      ),
+    )
   }
-  const passenger_details = __passenger_details(passengers)
-  if !is_ok(passenger_details) {
-    return Err(unwrap_err(passenger_details))
+  const passenger = __protected_passenger(passenger_refs[0], disclosure)
+  if !is_ok(passenger) {
+    return Err(unwrap_err(passenger))
   }
   if payload?.services != nil && len(payload.services) > 0 {
     return Err(__error("services_not_supported", "initial test booking does not add services"))
@@ -475,37 +498,117 @@ fn __booking_payload(payload: dict, spend) -> Result<DuffelBooking, DuffelError>
       offer_id: offer_id,
       total_amount: total_amount,
       total_currency: total_currency,
-      passengers: passengers,
+      passengers: [unwrap(passenger)],
     },
   )
 }
 
-fn __passenger_details(passengers: list<unknown>) -> Result<bool, DuffelError> {
-  for passenger in passengers {
-    if type_of(passenger) != "dict" {
-      return Err(__error("passenger_details_required", "each passenger must be an object"))
-    }
-    for field in [
-      "id",
-      "title",
-      "given_name",
-      "family_name",
-      "born_on",
-      "gender",
-      "email",
-      "phone_number",
-    ] {
-      if __required(passenger, field) == "" {
-        return Err(
-          __error(
-            "passenger_details_required",
-            "each passenger needs an offer ID, title, name, birth date, gender, email, and phone number",
-          ),
-        )
-      }
+fn __protected_passenger(reference, disclosure) -> Result<dict, DuffelError> {
+  if type_of(reference) != "dict" {
+    return Err(__error("invalid_passenger_reference", "passenger reference must be an object"))
+  }
+  const id = __required(reference, "id")
+  const passenger_type = __required(reference, "type")
+  if id == "" || passenger_type == "" {
+    return Err(__error("invalid_passenger_reference", "passenger offer ID and type are required"))
+  }
+  for forbidden in [
+    "title",
+    "given_name",
+    "family_name",
+    "born_on",
+    "gender",
+    "email",
+    "phone_number",
+    "identity_documents",
+  ] {
+    if reference[forbidden] != nil {
+      return Err(
+        __error(
+          "passenger_values_forbidden",
+          "passenger identity and contact values must come from protected disclosure",
+        ),
+      )
     }
   }
-  return Ok(true)
+  if type_of(disclosure) != "dict"
+    || disclosure?.source
+    != "fictional_test_fixture" {
+    return Err(
+      __error(
+        "fictional_profile_required",
+        "Duffel test orders require the explicit fictional protected-profile fixture",
+      ),
+    )
+  }
+  const classes = disclosure?.field_classes ?? []
+  for required in ["legal_identity", "birth_date", "contact_details"] {
+    if type_of(classes) != "list" || !classes.contains(required) {
+      return Err(
+        __error(
+          "protected_profile_fields_missing",
+          "the approved disclosure is missing a required passenger field class",
+        ),
+      )
+    }
+  }
+  const values = disclosure?.protected_values
+  const identity = values?.legal_identity
+  const contact = values?.contact_details
+  let passenger = {
+    id: id,
+    type: passenger_type,
+    title: __required(identity, "title"),
+    given_name: __required(identity, "given_name"),
+    family_name: __required(identity, "family_name"),
+    born_on: trim(to_string(values?.birth_date ?? "")),
+    gender: __required(identity, "gender"),
+    email: __required(contact, "email"),
+    phone_number: __required(contact, "phone"),
+  }
+  for field in ["title", "given_name", "family_name", "born_on", "gender", "email", "phone_number"] {
+    if __required(passenger, field) == "" {
+      return Err(
+        __error(
+          "protected_profile_values_missing",
+          "the protected profile is missing passenger details required by Duffel",
+        ),
+      )
+    }
+  }
+  const documents = values?.travel_documents ?? []
+  if classes.contains("travel_documents") {
+    if type_of(documents) != "list" || len(documents) == 0 {
+      return Err(
+        __error("travel_documents_missing", "the selected offer requires a travel document"),
+      )
+    }
+    let normalized_documents = []
+    for document in documents {
+      const document_type = __required(document, "document_type")
+      const number = __required(document, "number")
+      const issuing_country = uppercase(__required(document, "issuing_country"))
+      const expiry_date = __required(document, "expiry_date")
+      if document_type == "" || number == "" || regex_match("^[A-Z]{2}$", issuing_country) == nil
+        || expiry_date
+        == "" {
+        return Err(
+          __error("travel_documents_invalid", "the disclosed travel document is incomplete"),
+        )
+      }
+      normalized_documents = normalized_documents
+        + [
+        {
+          type: document_type,
+          unique_identifier: number,
+          issuing_country_code: issuing_country,
+          expires_on: expiry_date,
+        },
+      ]
+    }
+    passenger.identity_documents = normalized_documents
+  }
+  return Ok(passenger)
 }
 
 fn __offer_matches(
@@ -532,6 +635,29 @@ fn __offer_matches(
   }
   if expires_at == "" || !is_ok(parsed) || unwrap(parsed) <= clock.now().timestamp {
     return Err(__error("offer_expired", "offer expired before order creation"))
+  }
+  const fresh_passengers = offer?.passengers ?? []
+  if type_of(fresh_passengers) != "list" || len(fresh_passengers) != len(booking.passengers) {
+    return Err(__error("passenger_offer_mismatch", "refreshed offer passengers changed"))
+  }
+  for index in range(0, len(booking.passengers)) {
+    const expected = booking.passengers[index]
+    const actual = fresh_passengers[index]
+    if __required(actual, "id") != __required(expected, "id")
+      || __required(actual, "type")
+      != __required(
+      expected,
+      "type",
+    ) {
+      return Err(__error("passenger_offer_mismatch", "refreshed offer passengers changed"))
+    }
+  }
+  if offer?.passenger_identity_documents_required == true
+    && len(
+    booking.passengers[0]?.identity_documents ?? [],
+  )
+    == 0 {
+    return Err(__error("travel_documents_required", "refreshed offer requires a travel document"))
   }
   return Ok(true)
 }
