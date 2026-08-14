@@ -4,6 +4,7 @@ import {
   ExternalActionDispatchRequest,
   ExternalActionReconcileRequest,
 } from "std/external_action/contracts"
+import { ExternalActionDisclosurePlan } from "std/external_action/disclosure"
 
 const DUFFEL_PROVIDER_ID = "duffel"
 
@@ -124,6 +125,23 @@ pub fn shutdown(_harness: Harness) -> dict {
 /** Describe read capabilities and the separately governed booking method. */
 pub fn methods() -> list<DuffelMethod> {
   return DUFFEL_METHODS
+}
+
+/** Build the value-free disclosure plan required by one Duffel test order. */
+pub fn order_disclosure_plan(
+  travel_documents_required: bool = false,
+) -> ExternalActionDisclosurePlan {
+  let field_classes = ["legal_identity", "birth_date", "contact_details"]
+  if travel_documents_required {
+    field_classes = field_classes + ["travel_documents"]
+  }
+  return {
+    field_classes: field_classes,
+    recipient: "Duffel test mode",
+    purpose: "Create the exact approved fictional test order.",
+    source: "fictional_test_fixture",
+    require_reauthentication: false,
+  }
 }
 
 /** Execute a normalized read/research method. */

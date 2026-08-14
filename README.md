@@ -46,6 +46,8 @@ the explicitly fictional test identity and contact values directly to the
 adapter. The connector rejects identity-shaped values in the intent. It also
 requests a purpose-bound travel-document disclosure when the refreshed offer
 requires one. Receipts retain field classes and purpose, never values.
+Call `order_disclosure_plan(...)` to build this connector-owned, value-free
+plan instead of duplicating its field classes in a host.
 
 The adapter refreshes the offer inside the at-most-once dispatch checkpoint,
 checks the offer and passenger identity, expiry, price, currency, conditional

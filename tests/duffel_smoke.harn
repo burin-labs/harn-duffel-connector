@@ -9,6 +9,7 @@ import {
   external_action_adapter,
   init,
   normalize_offer,
+  order_disclosure_plan,
   request_descriptor,
   shutdown,
 } from "../src/lib"
@@ -42,13 +43,7 @@ fn booking_intent(payload = {}) {
         passengers: [{id: "pas_test_1", type: "adult"}],
       }
         + payload,
-      protected_disclosure: {
-        field_classes: ["legal_identity", "birth_date", "contact_details"],
-        recipient: "Duffel test mode",
-        purpose: "Create the exact approved fictional test order.",
-        source: "fictional_test_fixture",
-        require_reauthentication: false,
-      },
+      protected_disclosure: order_disclosure_plan(),
       external_spend: {currency: "USD", amount_minor: 12345},
       display: {summary: "Book the selected Duffel test flight for $123.45"},
     },
@@ -308,12 +303,7 @@ pipeline test_duffel_smoke(harness: Harness) {
   harness.runtime.checkpoint_clear()
   const document_intent = external_action_intent(
     intent
-      + {
-      protected_disclosure: (intent.protected_disclosure ?? {})
-        + {
-        field_classes: ["legal_identity", "birth_date", "contact_details", "travel_documents"],
-      },
-    },
+      + {protected_disclosure: order_disclosure_plan(true)},
   )
   const document_offer = fresh_offer()
     + {
