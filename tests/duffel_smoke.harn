@@ -14,7 +14,7 @@ import {
   shutdown,
 } from "../src/lib"
 
-fn grant(intent, method = "test_fixture") {
+fn grant(intent: any, method: any = "test_fixture") {
   return external_action_grant(
     intent,
     {
@@ -28,7 +28,7 @@ fn grant(intent, method = "test_fixture") {
   )
 }
 
-fn booking_intent(payload = {}) {
+fn booking_intent(payload: any = {}) {
   return external_action_intent(
     {
       actor: {kind: "user", id: "user-1"},
@@ -50,7 +50,7 @@ fn booking_intent(payload = {}) {
   )
 }
 
-fn fictional_disclosure(intent, include_documents = false) {
+fn fictional_disclosure(intent: any, include_documents: any = false) {
   let classes = ["legal_identity", "birth_date", "contact_details"]
   let values = {
     legal_identity: {title: "ms", given_name: "Test", family_name: "Traveler", gender: "f"},
@@ -82,11 +82,11 @@ fn fictional_disclosure(intent, include_documents = false) {
   }
 }
 
-fn disclosure_resolver(disclosure) {
+fn disclosure_resolver(disclosure: any) {
   return {id: "fictional-test-profile", disclose: { _harness, _request -> disclosure }}
 }
 
-fn fresh_offer(amount = "123.45", expires_at = "2099-01-01T00:00:00Z") {
+fn fresh_offer(amount: any = "123.45", expires_at: any = "2099-01-01T00:00:00Z") {
   return {
     data: {
       id: "off_test_123",
@@ -195,12 +195,10 @@ pipeline test_duffel_smoke(harness: Harness) {
   const intent = booking_intent()
   assert(
     !json_stringify(intent).contains("Test")
-      && !json_stringify(intent).contains(
-      "traveler@example.invalid",
-    ),
+      && !json_stringify(intent).contains("traveler@example.invalid"),
     "intent and model arguments contain no protected values",
   )
-  const adapter = unwrap(external_action_adapter())
+  const adapter = unwrap(external_action_adapter({clock: harness.clock, net: harness.net}))
   // A denial is terminal for one exact effect. Keep this negative control
   // distinct from the later approved booking so it cannot replay the denial.
   const incomplete_intent = booking_intent({offer_id: "off_missing_disclosure"})
@@ -228,9 +226,7 @@ pipeline test_duffel_smoke(harness: Harness) {
   )
   assert(
     !json_stringify(booked).contains("Test")
-      && !json_stringify(booked).contains(
-      "traveler@example.invalid",
-    ),
+      && !json_stringify(booked).contains("traveler@example.invalid"),
     "receipt excludes protected values",
   )
   assert(replay.id == booked.id, "duplicate delivery returns the same receipt")
@@ -276,12 +272,9 @@ pipeline test_duffel_smoke(harness: Harness) {
   const mismatch_intent = booking_intent({offer_id: "off_passenger_mismatch"})
   const mismatched_offer = fresh_offer()
     + {
-    data: fresh_offer().data
-      + {
-      id: "off_passenger_mismatch",
-      passengers: [{id: "pas_changed", type: "adult"}],
-    },
-  }
+      data: fresh_offer().data
+        + {id: "off_passenger_mismatch", passengers: [{id: "pas_changed", type: "adult"}]},
+    }
   harness.testing.http_mock(
     "GET",
     "https://api.duffel.com/air/offers/*",
@@ -308,9 +301,7 @@ pipeline test_duffel_smoke(harness: Harness) {
       + {protected_disclosure: order_disclosure_plan(true)},
   )
   const document_offer = fresh_offer()
-    + {
-    data: fresh_offer().data + {passenger_identity_documents_required: true},
-  }
+    + {data: fresh_offer().data + {passenger_identity_documents_required: true}}
   harness.testing.http_mock(
     "*",
     "https://api.duffel.com/*",
@@ -340,11 +331,11 @@ pipeline test_duffel_smoke(harness: Harness) {
   assert(
     document_order.data.passengers[0].identity_documents[0]
       == {
-      type: "passport",
-      unique_identifier: "TEST000000",
-      issuing_country_code: "US",
-      expires_on: "2099-01-01",
-    },
+        type: "passport",
+        unique_identifier: "TEST000000",
+        issuing_country_code: "US",
+        expires_on: "2099-01-01",
+      },
     "adapter maps the purpose-bound document at dispatch",
   )
   harness.testing.http_mock_clear()
@@ -473,10 +464,10 @@ pipeline test_duffel_smoke(harness: Harness) {
   const live_intent = external_action_intent(
     intent
       + {
-      environment: "live",
-      payload: intent.payload + {offer_id: "off_live_forbidden"},
-      protected_disclosure: nil,
-    },
+        environment: "live",
+        payload: intent.payload + {offer_id: "off_live_forbidden"},
+        protected_disclosure: nil,
+      },
   )
   const live_grant = external_action_grant(
     live_intent,
