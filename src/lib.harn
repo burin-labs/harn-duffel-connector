@@ -282,7 +282,10 @@ pub fn request_descriptor(
 }
 
 /** Build the Duffel test-mode adapter consumed by std/external_action. */
-pub fn external_action_adapter(args: dict = {}) -> Result<ExternalActionAdapter, DuffelError> {
+pub fn external_action_adapter(
+  _harness: {clock: HarnessClock, net: HarnessNet},
+  args: dict = {},
+) -> Result<ExternalActionAdapter, DuffelError> {
   const cfg = __config(args)
   if !is_ok(cfg) {
     return Err(unwrap_err(cfg))
@@ -317,31 +320,31 @@ pub fn normalize_offer(raw: unknown) -> dict {
     for segment in slice?.segments ?? [] {
       segments = segments
         + [
-        {
-          id: segment?.id,
-          origin: segment?.origin?.iata_code ?? segment?.origin?.id,
-          destination: segment?.destination?.iata_code ?? segment?.destination?.id,
-          departing_at: segment?.departing_at,
-          arriving_at: segment?.arriving_at,
-          duration: segment?.duration,
-          marketing_carrier: segment?.marketing_carrier?.name,
-          marketing_flight_number: segment?.marketing_carrier_flight_number,
-          operating_carrier: segment?.operating_carrier?.name,
-          aircraft: segment?.aircraft?.name,
-          stops: len(segment?.stops ?? []),
-        },
-      ]
+          {
+            id: segment?.id,
+            origin: segment?.origin?.iata_code ?? segment?.origin?.id,
+            destination: segment?.destination?.iata_code ?? segment?.destination?.id,
+            departing_at: segment?.departing_at,
+            arriving_at: segment?.arriving_at,
+            duration: segment?.duration,
+            marketing_carrier: segment?.marketing_carrier?.name,
+            marketing_flight_number: segment?.marketing_carrier_flight_number,
+            operating_carrier: segment?.operating_carrier?.name,
+            aircraft: segment?.aircraft?.name,
+            stops: len(segment?.stops ?? []),
+          },
+        ]
     }
     slices = slices
       + [
-      {
-        id: slice?.id,
-        origin: slice?.origin?.iata_code ?? slice?.origin?.id,
-        destination: slice?.destination?.iata_code ?? slice?.destination?.id,
-        duration: slice?.duration,
-        segments: segments,
-      },
-    ]
+        {
+          id: slice?.id,
+          origin: slice?.origin?.iata_code ?? slice?.origin?.id,
+          destination: slice?.destination?.iata_code ?? slice?.destination?.id,
+          duration: slice?.duration,
+          segments: segments,
+        },
+      ]
   }
   return {
     id: offer?.id,
@@ -366,7 +369,7 @@ fn __dispatch(
   const intent = request.intent
   if intent.provider != DUFFEL_PROVIDER_ID || intent.capability != "flights.book"
     || intent.operation
-    != "orders.create" {
+      != "orders.create" {
     return __failed("capability_mismatch")
   }
   if intent.environment != "test" {
@@ -428,7 +431,7 @@ fn __reconcile(
   const intent = request.intent
   if intent.provider != DUFFEL_PROVIDER_ID || intent.capability != "flights.book"
     || intent.operation
-    != "orders.create"
+      != "orders.create"
     || intent.environment != "test"
     || type_of(intent.payload) != "dict" {
     return __indeterminate("unsupported_reconciliation")
@@ -463,7 +466,11 @@ fn __reconcile(
   }
 }
 
-fn __booking_payload(payload: dict, spend, disclosure) -> Result<DuffelBooking, DuffelError> {
+fn __booking_payload(
+  payload: dict,
+  spend: any,
+  disclosure: any,
+) -> Result<DuffelBooking, DuffelError> {
   const offer_id = __required(payload, "offer_id")
   const total_amount = trim(to_string(payload?.total_amount ?? ""))
   const total_currency = uppercase(trim(to_string(payload?.total_currency ?? "")))
@@ -503,7 +510,7 @@ fn __booking_payload(payload: dict, spend, disclosure) -> Result<DuffelBooking, 
   )
 }
 
-fn __protected_passenger(reference, disclosure) -> Result<dict, DuffelError> {
+fn __protected_passenger(reference: any, disclosure: any) -> Result<dict, DuffelError> {
   if type_of(reference) != "dict" {
     return Err(__error("invalid_passenger_reference", "passenger reference must be an object"))
   }
@@ -533,7 +540,7 @@ fn __protected_passenger(reference, disclosure) -> Result<dict, DuffelError> {
   }
   if type_of(disclosure) != "dict"
     || disclosure?.source
-    != "fictional_test_fixture" {
+      != "fictional_test_fixture" {
     return Err(
       __error(
         "fictional_profile_required",
@@ -591,20 +598,20 @@ fn __protected_passenger(reference, disclosure) -> Result<dict, DuffelError> {
       const expiry_date = __required(document, "expiry_date")
       if document_type == "" || number == "" || regex_match("^[A-Z]{2}$", issuing_country) == nil
         || expiry_date
-        == "" {
+          == "" {
         return Err(
           __error("travel_documents_invalid", "the disclosed travel document is incomplete"),
         )
       }
       normalized_documents = normalized_documents
         + [
-        {
-          type: document_type,
-          unique_identifier: number,
-          issuing_country_code: issuing_country,
-          expires_on: expiry_date,
-        },
-      ]
+          {
+            type: document_type,
+            unique_identifier: number,
+            issuing_country_code: issuing_country,
+            expires_on: expiry_date,
+          },
+        ]
     }
     passenger.identity_documents = normalized_documents
   }
@@ -613,9 +620,9 @@ fn __protected_passenger(reference, disclosure) -> Result<dict, DuffelError> {
 
 fn __offer_matches(
   clock: HarnessClock,
-  offer,
+  offer: any,
   booking: DuffelBooking,
-  spend,
+  spend: any,
 ) -> Result<bool, DuffelError> {
   if trim(to_string(offer?.id ?? "")) != booking.offer_id {
     return Err(__error("offer_identity_changed", "refreshed offer id does not match"))
@@ -645,18 +652,13 @@ fn __offer_matches(
     const actual = fresh_passengers[index]
     if __required(actual, "id") != __required(expected, "id")
       || __required(actual, "type")
-      != __required(
-      expected,
-      "type",
-    ) {
+        != __required(expected, "type") {
       return Err(__error("passenger_offer_mismatch", "refreshed offer passengers changed"))
     }
   }
   if offer?.passenger_identity_documents_required == true
-    && len(
-    booking.passengers[0]?.identity_documents ?? [],
-  )
-    == 0 {
+    && len(booking.passengers[0]?.identity_documents ?? [])
+      == 0 {
     return Err(__error("travel_documents_required", "refreshed offer requires a travel document"))
   }
   return Ok(true)
@@ -753,15 +755,15 @@ fn __normalize_response(method: string, raw: unknown) -> unknown {
     for place in payload?.data ?? [] {
       places = places
         + [
-        {
-          id: place?.id,
-          name: place?.name,
-          iata_code: place?.iata_code,
-          city_name: place?.city_name,
-          country_name: place?.country_name,
-          type: place?.type,
-        },
-      ]
+          {
+            id: place?.id,
+            name: place?.name,
+            iata_code: place?.iata_code,
+            city_name: place?.city_name,
+            country_name: place?.country_name,
+            type: place?.type,
+          },
+        ]
     }
     return {data: places, meta: payload?.meta}
   }
@@ -778,7 +780,7 @@ fn __normalize_response(method: string, raw: unknown) -> unknown {
   return {}
 }
 
-fn __normalize_order(order) -> dict {
+fn __normalize_order(order: any) -> dict {
   return {
     id: order?.id,
     offer_id: order?.offer_id,
@@ -882,7 +884,7 @@ fn __ensure_egress_policy(net: HarnessNet) -> Result<bool, DuffelError> {
 fn __descriptor(
   method: string,
   url: string,
-  body,
+  body: any,
   query: dict,
   cfg: DuffelConfig,
 ) -> DuffelRequest {
@@ -942,7 +944,7 @@ fn __method(name: string) -> DuffelMethod? {
   return nil
 }
 
-fn __required(args, key: string) -> string {
+fn __required(args: any, key: string) -> string {
   const camel = if key == "offer_id" {
     "offerId"
   } else if key == "offer_request_id" {
@@ -964,7 +966,7 @@ fn __dispatch_error(error: dict) -> ExternalActionAdapterResult {
   }
   if type_of(status) == "int" && status >= 400 && status < 500 && status != 408
     && status
-    != 429 {
+      != 429 {
     return __rejected(code)
   }
   return __indeterminate(code)
