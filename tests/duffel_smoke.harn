@@ -199,7 +199,9 @@ pipeline test_duffel_smoke(harness: Harness) {
     "intent and model arguments contain no protected values",
   )
   const adapter = unwrap(external_action_adapter({clock: harness.clock, net: harness.net}))
-  const incomplete_intent = booking_intent()
+  // A denial is terminal for one exact effect. Keep this negative control
+  // distinct from the later approved booking so it cannot replay the denial.
+  const incomplete_intent = booking_intent({offer_id: "off_missing_disclosure"})
   const incomplete = external_action_execute(
     harness,
     incomplete_intent,
