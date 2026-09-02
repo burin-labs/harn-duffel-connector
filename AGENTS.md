@@ -22,6 +22,20 @@ and hosted tenancy/governance in Harn Cloud.
 - An ambiguous create is reconciled with a read-only order query and is never
   retried speculatively.
 
+## Pull request titles
+
+Use `[Area] Sentence case`. The area is one of `Connector`, `CI`, or `Docs`.
+
+- `[Connector] Reject webhook deliveries with a stale timestamp`
+- `[CI] Repin the shared Harn package workflow`
+- `[Docs] Describe the poll cursor contract`
+
+Keep the title on one line, under about 70 characters. Say what changed, not
+which files moved. Capitalize the first word after the bracket and leave the
+rest in sentence case.
+
+`CONTRIBUTING.md` states the contribution policy for this repository.
+
 <!-- BEGIN HARN SHARED AGENT CONTRACT: managed by harn-bump-fleet -->
 
 ## Ecosystem working agreement
