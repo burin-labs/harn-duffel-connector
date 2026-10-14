@@ -696,7 +696,7 @@ fn __amount_minor(amount: string, currency: string) -> Result<int, DuffelError> 
   }
   const parts = amount.split(".")
   const whole = to_int(parts[0]) ?? 0
-  const fraction = len(parts) == 1 ? "" : parts[1]
+  const fraction = parts[1] ?? ""
   if len(fraction) > exponent {
     return Err(__error("invalid_currency_precision", "amount has too many fractional digits"))
   }
@@ -906,7 +906,7 @@ fn __descriptor(
 
 fn __query_url(url: string, query: dict) -> string {
   let parts: list<string> = []
-  for key in query.keys().sort() {
+  for key in query.keys().sorted() {
     const value = query[key]
     if value != nil && trim(to_string(value)) != "" {
       parts = parts + [url_encode(key) + "=" + url_encode(to_string(value))]
